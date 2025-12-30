@@ -1,3 +1,5 @@
+import random
+
 import requests
 import uuid
 import time
@@ -12,10 +14,15 @@ class RpcError(Exception):
     pass
 
 
+def backoff_with_jitter(attempt, base=0.5, cap=5.0):
+    exp = min(cap, base * (2 ** attempt))
+    return random.uniform(0, exp)
+
+
 class CircuitBreaker:
     def __init__(self, failure_threshold=3, recovery_timeout=10):
         self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
+        self.recovery_timeout = recovery_timeout + random.uniform(0, 5)
 
         self.failures = 0
         self.state = "CLOSED"
@@ -79,8 +86,9 @@ class UserRpcClient:
 
             except Exception as e:
                 last_exc = e
-                print(f"[retry {attempt}/{MAX_RETRIES}]")
-                time.sleep(BACKOFF * attempt)
+                sleep_time = backoff_with_jitter(attempt)
+                print(f"[retry {attempt}] sleep {sleep_time:.2f}s")
+                time.sleep(sleep_time)
 
         raise RpcError("Request failed after retries") from last_exc
 
