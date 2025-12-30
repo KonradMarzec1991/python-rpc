@@ -55,8 +55,12 @@ class UserRpcClient:
         self.session = requests.Session()
         self.breaker = CircuitBreaker()
 
-    def _post(self, path, json_body, headers=None):
+    def _post(self, path, json_body, headers, deadline):
         self.breaker.before_request()
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise RpcError("Deadline exceeded before request")
 
         try:
             response = self.session.post(
@@ -77,12 +81,15 @@ class UserRpcClient:
         except requests.HTTPError as e:
             raise RpcError(e.response.text)
 
-    def _post_with_retry(self, path, json_body, headers=None):
+    def _post_with_retry(self, path, json_body, headers, deadline):
         last_exc = None
 
         for attempt in range(1, MAX_RETRIES + 1):
+            if time.time() >= deadline:
+                raise RpcError("Deadline exceeded")
+
             try:
-                return self._post(path, json_body, headers)
+                return self._post(path, json_body, headers, deadline)
 
             except Exception as e:
                 last_exc = e
@@ -92,7 +99,9 @@ class UserRpcClient:
 
         raise RpcError("Request failed after retries") from last_exc
 
-    def create_user(self, id, firstname, lastname, email):
+    def create_user(self, id, firstname, lastname, email, deadline_seconds=3.0):
+        deadline = time.time() + deadline_seconds
+
         return self._post_with_retry(
             "/create_user",
             json_body={
@@ -101,7 +110,11 @@ class UserRpcClient:
                 "lastname": lastname,
                 "email": email,
             },
-            headers={"Idempotency-Key": str(uuid.uuid4())},
+            headers={
+                "Idempotency-Key": str(uuid.uuid4()),
+                "X-Deadline": str(deadline),
+            },
+            deadline=deadline
         )
 
     def get_user(self, id):

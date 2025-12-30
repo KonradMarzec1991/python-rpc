@@ -11,6 +11,21 @@ IDEMPOTENCY_KEYS = {}
 class RpcHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
+        deadline_header = self.headers.get("X-Deadline")
+        if deadline_header:
+            deadline = float(deadline_header)
+            if time.time() > deadline:
+                self.respond(408, {
+                    "error": {
+                        "code": "DEADLINE_EXCEEDED",
+                        "message": "Request deadline exceeded"
+                    }
+                })
+                return
+        else:
+            deadline = None
+
+
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         data = json.loads(body)
