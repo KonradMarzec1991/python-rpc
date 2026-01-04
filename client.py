@@ -99,7 +99,7 @@ class UserRpcClient:
 
         raise RpcError("Request failed after retries") from last_exc
 
-    def create_user(self, id, firstname, lastname, email, deadline_seconds=3.0):
+    def create_user(self, id, firstname, lastname, email, deadline_seconds=3):
         deadline = time.time() + deadline_seconds
 
         return self._post_with_retry(
@@ -118,10 +118,7 @@ class UserRpcClient:
         )
 
     def get_user(self, id):
-        return self._post_with_retry(
-            "/get_user",
-            json_body={"id": id},
-        )
+        return self._post_with_retry("/get_user", json_body={"id": id})
 
 
 if __name__ == "__main__":

@@ -22,9 +22,6 @@ class RpcHandler(BaseHTTPRequestHandler):
                     }
                 })
                 return
-        else:
-            deadline = None
-
 
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
