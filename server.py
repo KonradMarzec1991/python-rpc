@@ -1,104 +1,60 @@
-import random
-import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
+import grpc
+from concurrent import futures
 from datetime import datetime
+
+import user_pb2
+import user_pb2_grpc
+
 
 USERS = {}
 IDEMPOTENCY_KEYS = {}
 
 
-class RpcHandler(BaseHTTPRequestHandler):
+class UserService(user_pb2_grpc.UserServiceServicer):
 
-    def do_POST(self):
-        deadline_header = self.headers.get("X-Deadline")
-        if deadline_header:
-            deadline = float(deadline_header)
-            if time.time() > deadline:
-                self.respond(408, {
-                    "error": {
-                        "code": "DEADLINE_EXCEEDED",
-                        "message": "Request deadline exceeded"
-                    }
-                })
-                return
+    def GetUser(self, request, context):
+        if request.id not in USERS:
+            context.abort(
+                grpc.StatusCode.NOT_FOUND,
+                "User not found"
+            )
 
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-        data = json.loads(body)
+        user = USERS[request.id]
+        return user_pb2.UserResponse(**user)
 
-        if self.path == "/v1/rpc/get_user":
-            self.handle_get_user(data)
+    def CreateUser(self, request, context):
+        metadata = dict(context.invocation_metadata())
+        idem_key = metadata.get("idempotency-key")
 
-        elif self.path == "/v1/rpc/create_user":
-            self.handle_create_user(data)
+        if not idem_key:
+            context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "Missing Idempotency-Key"
+            )
 
-        else:
-            self.respond(404, {"error": "NOT_FOUND"})
+        if idem_key in IDEMPOTENCY_KEYS:
+            return user_pb2.CreateUserResponse(success=True)
 
-    def handle_get_user(self, data):
-        user_id = data["id"]
-        user = USERS.get(user_id)
-
-        if not user:
-            self.respond(404, {
-                "error": {
-                    "code": "USER_NOT_FOUND",
-                    "message": "User with given id does not exist"
-                }
-            })
-            return
-
-        self.respond(200, user)
-
-    def handle_create_user(self, data):
-        key = self.headers.get("Idempotency-Key")
-
-        if not key:
-            self.respond(400, {
-                "error": {
-                    "code": "INVALID_REQUEST",
-                    "message": "Missing Idempotency-Key"
-                }
-            })
-            return
-
-        # symulacja problemu
-        rand = random.random()
-        if rand < 0.7:
-            print("Server sleeping (simulated timeout)")
-            time.sleep(5)
-
-        if key in IDEMPOTENCY_KEYS:
-            self.respond(200, IDEMPOTENCY_KEYS[key])
-            return
-
-        USERS[data["id"]] = {
-            "id": data["id"],
-            "firstname": data["firstname"],
-            "lastname": data["lastname"],
-            "email": data["email"],
+        USERS[request.id] = {
+            "id": request.id,
+            "firstname": request.firstname,
+            "lastname": request.lastname,
+            "email": request.email,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
 
-        response = {"success": True}
-        IDEMPOTENCY_KEYS[key] = response
-        self.respond(200, response)
-
-    def respond(self, status, payload):
-        response = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(response)))
-        self.end_headers()
-        self.wfile.write(response)
+        IDEMPOTENCY_KEYS[idem_key] = True
+        return user_pb2.CreateUserResponse(success=True)
 
 
-def run():
-    server = HTTPServer(("localhost", 8000), RpcHandler)
-    print("RPC server running on http://localhost:8000")
-    server.serve_forever()
+def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    user_pb2_grpc.add_UserServiceServicer_to_server(UserService(), server)
+    server.add_insecure_port("[::]:50051")
+    server.start()
+    print("gRPC server running on :50051")
+    server.wait_for_termination()
 
 
 if __name__ == "__main__":
-    run()
+    serve()
